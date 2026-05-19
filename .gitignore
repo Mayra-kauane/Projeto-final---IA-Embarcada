@@ -1,0 +1,15 @@
+data/
+__pycache__/
+*.pyc
+.venv/
+.matplotlib-cache/
+notebooks/.matplotlib-cache/
+.pio/
+.platformio/
+.vscode/*
+docs/
+slides/
+descricao_projeto_final_extraido.txt
+entrega.txt
+scripts/generate_slides_pdf.py
+firmware/wokwi/README.md
