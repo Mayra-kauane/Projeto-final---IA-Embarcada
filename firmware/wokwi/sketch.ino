@@ -9,8 +9,12 @@ const int SDA_PIN = 8;
 const int SCL_PIN = 9;
 const int MPU6050_ADDR = 0x68;
 const int SAMPLE_INTERVAL_MS = 20;
+const int AUTO_DEMO_INTERVAL_MS = 4500;
 
 int currentSample = 0;
+bool autoDemoEnabled = true;
+unsigned long lastAutoDemoMs = 0;
+int autoDemoStep = 0;
 
 struct SensorReading {
   float accX;
@@ -166,6 +170,7 @@ void runInferenceForCurrentSample() {
   printFeatureSummary(features);
   DebugSerial.println("========================================");
   DebugSerial.println("Comandos: n=proxima janela | l=inferencia live MPU6050 | r=leitura crua");
+  DebugSerial.println("         a=liga/desliga demo automatica");
 }
 
 bool collectLiveWindow(float window[6][WINDOW_SIZE]) {
@@ -212,6 +217,7 @@ void runLiveInferenceFromMpu6050() {
   printFeatureSummary(features);
   DebugSerial.println("========================================");
   DebugSerial.println("Comandos: n=proxima janela | l=inferencia live MPU6050 | r=leitura crua");
+  DebugSerial.println("         a=liga/desliga demo automatica");
 }
 
 void setup() {
@@ -227,12 +233,14 @@ void setup() {
   DebugSerial.println("  n = testar proxima janela real do dataset UCI HAR");
   DebugSerial.println("  l = coletar 128 leituras do MPU6050 e inferir no ESP32-S3");
   DebugSerial.println("  r = mostrar uma leitura instantanea do MPU6050");
+  DebugSerial.println("  a = ligar/desligar demo automatica");
   DebugSerial.println("========================================");
 
   setupMpu6050();
   DebugSerial.println("MPU6050 inicializado.");
   printMpu6050Once();
   runInferenceForCurrentSample();
+  lastAutoDemoMs = millis();
 }
 
 void loop() {
@@ -245,6 +253,24 @@ void loop() {
       runLiveInferenceFromMpu6050();
     } else if (command == 'r' || command == 'R') {
       printMpu6050Once();
+    } else if (command == 'a' || command == 'A') {
+      autoDemoEnabled = !autoDemoEnabled;
+      DebugSerial.println();
+      DebugSerial.print("Demo automatica: ");
+      DebugSerial.println(autoDemoEnabled ? "ligada" : "desligada");
+      lastAutoDemoMs = millis();
+    }
+  }
+
+  if (autoDemoEnabled && millis() - lastAutoDemoMs >= AUTO_DEMO_INTERVAL_MS) {
+    lastAutoDemoMs = millis();
+    autoDemoStep++;
+
+    if (autoDemoStep % 4 == 0) {
+      runLiveInferenceFromMpu6050();
+    } else {
+      currentSample = (currentSample + 1) % DEMO_SAMPLE_COUNT;
+      runInferenceForCurrentSample();
     }
   }
 }

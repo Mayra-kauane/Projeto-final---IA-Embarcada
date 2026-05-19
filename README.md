@@ -106,7 +106,11 @@ Comandos no terminal do Wokwi:
 n = testa a próxima janela real do dataset UCI HAR
 l = coleta 128 leituras do MPU6050 e faz inferência live
 r = mostra uma leitura instantânea do MPU6050
+a = liga/desliga a demo automática
 ```
+
+A demo automática inicia ligada por padrão para facilitar a apresentação: ela avança pelas janelas
+do dataset e periodicamente executa uma inferência live com o MPU6050.
 
 O comando `l` executa a pipeline embarcada completa:
 
