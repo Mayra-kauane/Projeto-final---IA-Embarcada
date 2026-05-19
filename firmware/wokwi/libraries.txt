@@ -1,0 +1,2 @@
+# Nao precisa instalar bibliotecas externas.
+# O projeto usa apenas Wire.h, que ja vem como biblioteca padrao do Arduino no Wokwi.
