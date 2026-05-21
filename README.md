@@ -16,7 +16,7 @@ Classificar atividades humanas a partir de sinais inerciais:
 O fluxo completo do projeto é:
 
 ```text
-sensor -> janela com 128 leituras -> extração de características -> modelo compacto -> inferência no ESP32-S3
+sensor -> janela com 128 leituras -> extração de características -> MLP compacta -> inferência no ESP32-S3
 ```
 
 ## Dataset
@@ -46,23 +46,53 @@ Como são 6 sinais e 5 características por sinal, cada janela vira uma entrada 
 
 ## Modelo
 
-O modelo usado foi uma árvore de decisão (`DecisionTreeClassifier`).
+O modelo final embarcado foi uma **MLP compacta** (`MLPClassifier`), ou seja, uma pequena rede neural perceptron multicamadas.
 
-A compressão foi feita limitando o tamanho da árvore:
-
-```python
-DecisionTreeClassifier(max_depth=6, min_samples_leaf=8, random_state=42)
-```
-
-Resultado:
+Arquitetura usada:
 
 ```text
-Acurácia no teste: 78,42%
-Árvore completa: 593 nós
-Árvore compacta: 61 nós
+entrada: 30 características
+camada oculta: 16 neurônios com ReLU
+saída: 6 classes de atividade
 ```
 
-Não foi feita quantização int8. A compressão usada foi estrutural, reduzindo a quantidade de nós/regras da árvore.
+Configuração principal em Python:
+
+```python
+make_pipeline(
+    StandardScaler(),
+    MLPClassifier(
+        hidden_layer_sizes=(16,),
+        activation="relu",
+        solver="adam",
+        alpha=0.0005,
+        max_iter=800,
+        early_stopping=True,
+        n_iter_no_change=25,
+        random_state=42,
+        learning_rate_init=0.001,
+    ),
+)
+```
+
+Resultado no conjunto de teste:
+
+```text
+MLP compacta: 85,48% de acurácia
+Quantidade de parâmetros: 598
+```
+
+Também foi treinada uma árvore de decisão compacta para comparação:
+
+```text
+Árvore compacta: 78,42% de acurácia
+Árvore compacta: 61 nós
+Árvore completa de comparação: 593 nós
+```
+
+Por isso, a MLP foi escolhida como modelo final: ela obteve melhor acurácia e continuou pequena o suficiente para embarcar no ESP32-S3.
+
+Não foi feita quantização int8. A compactação foi feita pela escolha de uma arquitetura pequena, com poucos neurônios e poucos parâmetros.
 
 ## Embarque do modelo
 
@@ -72,14 +102,24 @@ O modelo treinado em Python foi convertido para arrays C/C++ no arquivo:
 firmware/wokwi/model_data.h
 ```
 
-O ESP32-S3 percorre esses arrays para executar a inferência:
+O arquivo exportado contém:
 
 ```text
-TREE_LEFT
-TREE_RIGHT
-TREE_FEATURE
-TREE_THRESHOLD
-TREE_CLASS
+SCALER_MEAN
+SCALER_SCALE
+MLP_W1
+MLP_B1
+MLP_W2
+MLP_B2
+```
+
+No firmware, o ESP32-S3 executa a inferência manualmente:
+
+```text
+normalização das 30 características
+-> camada oculta com ReLU
+-> camada de saída
+-> escolha da classe com maior pontuação
 ```
 
 Assim, o dispositivo não precisa rodar Python nem `scikit-learn`.
@@ -109,13 +149,12 @@ r = mostra uma leitura instantânea do MPU6050
 a = liga/desliga a demo automática
 ```
 
-A demo automática inicia ligada por padrão para facilitar a apresentação: ela avança pelas janelas
-do dataset e periodicamente executa uma inferência live com o MPU6050.
+A demo automática inicia ligada por padrão para facilitar a apresentação: ela avança pelas janelas do dataset e periodicamente executa uma inferência live com o MPU6050.
 
 O comando `l` executa a pipeline embarcada completa:
 
 ```text
-MPU6050 -> 128 leituras -> 30 características -> árvore compacta -> classe prevista
+MPU6050 -> 128 leituras -> 30 características -> MLP compacta -> classe prevista
 ```
 
 ## Como executar
@@ -151,16 +190,16 @@ Para simular no VS Code:
 3. Execute `PlatformIO: Build`.
 4. Execute `Wokwi: Start Simulator`.
 5. Abra o terminal `Wokwi Term...`.
-6. Use os comandos `n`, `l` e `r`.
+6. Use os comandos `n`, `l`, `r` e `a`.
 
 ## Estrutura principal
 
 ```text
 scripts/download_dataset.py       # baixa o dataset UCI HAR
-scripts/train_and_export.py       # treina, compacta e exporta o modelo
+scripts/train_and_export.py       # treina, compara e exporta o modelo
 notebooks/                        # análise do dataset e treinamento
 firmware/wokwi/sketch.ino         # firmware do ESP32-S3
-firmware/wokwi/model_data.h       # modelo embarcado em C/C++
+firmware/wokwi/model_data.h       # MLP embarcada em C/C++
 firmware/wokwi/demo_windows.h     # janelas reais do dataset para demonstração
 platformio.ini                    # configuração PlatformIO
 wokwi.toml                        # configuração Wokwi

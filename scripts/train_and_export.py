@@ -2,6 +2,9 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.metrics import accuracy_score, classification_report
+from sklearn.neural_network import MLPClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 
 
@@ -75,17 +78,22 @@ def load_split(base, split):
     return x, y, signals
 
 
-def save_metrics(report_text, accuracy, compact_nodes, full_nodes):
+def save_metrics(report_text, accuracy, compact_nodes, full_nodes, mlp_params, tree_accuracy):
     MODEL_DIR.mkdir(exist_ok=True)
     text = [
         "# Metricas do Modelo",
         "",
-        f"Acuracia no conjunto de teste: {accuracy:.4f}",
+        "Modelo final embarcado: MLP compacta",
+        f"Acuracia da MLP no conjunto de teste: {accuracy:.4f}",
+        f"Parametros da MLP compacta: {mlp_params}",
+        "",
+        "Modelo anterior de comparacao: arvore de decisao compacta",
+        f"Acuracia da arvore compacta: {tree_accuracy:.4f}",
         f"Nos da arvore compacta: {compact_nodes}",
         f"Nos da arvore completa de comparacao: {full_nodes}",
         "",
-        "A compressao usada aqui foi limitar a profundidade da arvore.",
-        "Isso reduz a quantidade de regras que precisa ir para o ESP32-S3.",
+        "A compactacao final foi feita escolhendo uma MLP pequena, com apenas uma camada oculta de 16 neuronios.",
+        "Isso melhora a metrica em relacao a arvore compacta e ainda permite embarcar o modelo como arrays C/C++.",
         "",
         "## Relatorio por classe",
         "",
@@ -97,24 +105,24 @@ def save_metrics(report_text, accuracy, compact_nodes, full_nodes):
     (MODEL_DIR / "metrics.md").write_text("\n".join(text), encoding="utf-8")
 
 
-def export_tree_to_header(model):
-    tree = model.tree_
-    children_left = tree.children_left.astype(int)
-    children_right = tree.children_right.astype(int)
-    feature = tree.feature.astype(int)
-    threshold = tree.threshold.astype(float)
-    values = tree.value[:, 0, :]
-    predicted_class = values.argmax(axis=1).astype(int)
+def export_mlp_to_header(model):
+    scaler = model.named_steps["standardscaler"]
+    mlp = model.named_steps["mlpclassifier"]
+    input_weights = mlp.coefs_[0]
+    output_weights = mlp.coefs_[1]
+    hidden_bias = mlp.intercepts_[0]
+    output_bias = mlp.intercepts_[1]
+    hidden_count = input_weights.shape[1]
 
     lines = [
         "#pragma once",
         "",
         "// Arquivo gerado por scripts/train_and_export.py.",
-        "// Ele contem a arvore de decisao treinada e pronta para embarcar.",
+        "// Ele contem a MLP compacta treinada e pronta para embarcar.",
         "",
         f"const int FEATURE_COUNT = {len(FEATURE_NAMES)};",
         f"const int CLASS_COUNT = {len(ACTIVITY_NAMES)};",
-        f"const int NODE_COUNT = {tree.node_count};",
+        f"const int HIDDEN_COUNT = {hidden_count};",
         "",
         "const char* CLASS_NAMES[CLASS_COUNT] = {",
     ]
@@ -126,24 +134,30 @@ def export_tree_to_header(model):
     lines.append("};")
     lines.append("")
 
-    def array(name, values, c_type):
-        lines.append(f"const {c_type} {name}[NODE_COUNT] = {{")
+    def array_1d(name, values):
+        lines.append(f"const float {name}[{len(values)}] = {{")
         chunk = []
         for value in values:
-            if c_type == "float":
-                chunk.append(f"{value:.8f}f")
-            else:
-                chunk.append(str(int(value)))
+            chunk.append(f"{float(value):.8f}f")
         for i in range(0, len(chunk), 8):
             lines.append("  " + ", ".join(chunk[i : i + 8]) + ",")
         lines.append("};")
         lines.append("")
 
-    array("TREE_LEFT", children_left, "int")
-    array("TREE_RIGHT", children_right, "int")
-    array("TREE_FEATURE", feature, "int")
-    array("TREE_THRESHOLD", threshold, "float")
-    array("TREE_CLASS", predicted_class, "int")
+    def array_2d(name, values, rows, cols):
+        lines.append(f"const float {name}[{rows}][{cols}] = {{")
+        for row in values:
+            formatted = ", ".join(f"{float(value):.8f}f" for value in row)
+            lines.append(f"  {{{formatted}}},")
+        lines.append("};")
+        lines.append("")
+
+    array_1d("SCALER_MEAN", scaler.mean_)
+    array_1d("SCALER_SCALE", scaler.scale_)
+    array_2d("MLP_W1", input_weights, len(FEATURE_NAMES), hidden_count)
+    array_1d("MLP_B1", hidden_bias)
+    array_2d("MLP_W2", output_weights, hidden_count, len(ACTIVITY_NAMES))
+    array_1d("MLP_B2", output_bias)
 
     FIRMWARE_DIR.mkdir(parents=True, exist_ok=True)
     (FIRMWARE_DIR / "model_data.h").write_text("\n".join(lines), encoding="utf-8")
@@ -199,24 +213,52 @@ def main():
     full_model = DecisionTreeClassifier(random_state=42)
     full_model.fit(x_train, y_train)
 
-    compact_model = DecisionTreeClassifier(max_depth=6, min_samples_leaf=8, random_state=42)
-    compact_model.fit(x_train, y_train)
+    compact_tree = DecisionTreeClassifier(max_depth=6, min_samples_leaf=8, random_state=42)
+    compact_tree.fit(x_train, y_train)
 
-    predictions = compact_model.predict(x_test)
+    mlp_model = make_pipeline(
+        StandardScaler(),
+        MLPClassifier(
+            hidden_layer_sizes=(16,),
+            activation="relu",
+            solver="adam",
+            alpha=0.0005,
+            max_iter=800,
+            early_stopping=True,
+            n_iter_no_change=25,
+            random_state=42,
+            learning_rate_init=0.001,
+        ),
+    )
+    mlp_model.fit(x_train, y_train)
+
+    tree_predictions = compact_tree.predict(x_test)
+    tree_accuracy = accuracy_score(y_test, tree_predictions)
+
+    predictions = mlp_model.predict(x_test)
     accuracy = accuracy_score(y_test, predictions)
     report = classification_report(y_test, predictions, target_names=ACTIVITY_NAMES)
+    mlp = mlp_model.named_steps["mlpclassifier"]
+    mlp_params = int(
+        sum(weights.size for weights in mlp.coefs_)
+        + sum(bias.size for bias in mlp.intercepts_)
+    )
 
     save_metrics(
         report,
         accuracy,
-        compact_model.tree_.node_count,
+        compact_tree.tree_.node_count,
         full_model.tree_.node_count,
+        mlp_params,
+        tree_accuracy,
     )
-    export_tree_to_header(compact_model)
+    export_mlp_to_header(mlp_model)
     export_demo_windows(test_signals, y_test)
 
-    print(f"Acuracia: {accuracy:.4f}")
-    print(f"Nos da arvore compacta: {compact_model.tree_.node_count}")
+    print(f"Acuracia MLP compacta: {accuracy:.4f}")
+    print(f"Parametros da MLP compacta: {mlp_params}")
+    print(f"Acuracia arvore compacta: {tree_accuracy:.4f}")
+    print(f"Nos da arvore compacta: {compact_tree.tree_.node_count}")
     print(f"Nos da arvore completa: {full_model.tree_.node_count}")
     print("Arquivos gerados em models/ e firmware/wokwi/.")
 

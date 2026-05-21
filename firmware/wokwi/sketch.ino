@@ -126,20 +126,41 @@ void computeFeatures(const float window[6][WINDOW_SIZE], float features[FEATURE_
 }
 
 int predictActivity(const float features[FEATURE_COUNT]) {
-  int node = 0;
+  float hidden[HIDDEN_COUNT];
 
-  while (TREE_LEFT[node] != -1) {
-    int featureIndex = TREE_FEATURE[node];
-    float threshold = TREE_THRESHOLD[node];
+  for (int neuron = 0; neuron < HIDDEN_COUNT; neuron++) {
+    float sum = MLP_B1[neuron];
 
-    if (features[featureIndex] <= threshold) {
-      node = TREE_LEFT[node];
-    } else {
-      node = TREE_RIGHT[node];
+    for (int feature = 0; feature < FEATURE_COUNT; feature++) {
+      float scale = SCALER_SCALE[feature];
+      float normalized = scale == 0.0f ? 0.0f : (features[feature] - SCALER_MEAN[feature]) / scale;
+      sum += normalized * MLP_W1[feature][neuron];
+    }
+
+    hidden[neuron] = sum > 0.0f ? sum : 0.0f;
+  }
+
+  int bestClass = 0;
+  float bestScore = MLP_B2[0];
+
+  for (int neuron = 0; neuron < HIDDEN_COUNT; neuron++) {
+    bestScore += hidden[neuron] * MLP_W2[neuron][0];
+  }
+
+  for (int classIndex = 1; classIndex < CLASS_COUNT; classIndex++) {
+    float score = MLP_B2[classIndex];
+
+    for (int neuron = 0; neuron < HIDDEN_COUNT; neuron++) {
+      score += hidden[neuron] * MLP_W2[neuron][classIndex];
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestClass = classIndex;
     }
   }
 
-  return TREE_CLASS[node];
+  return bestClass;
 }
 
 void printFeatureSummary(const float features[FEATURE_COUNT]) {
@@ -229,6 +250,7 @@ void setup() {
   DebugSerial.println("========================================");
   DebugSerial.println("Projeto Final - IA Embarcada e Modelos Compactos");
   DebugSerial.println("Classificador de atividade humana com UCI HAR + ESP32-S3");
+  DebugSerial.println("Modelo embarcado: MLP compacta com 1 camada oculta de 16 neuronios");
   DebugSerial.println("Modos disponiveis:");
   DebugSerial.println("  n = testar proxima janela real do dataset UCI HAR");
   DebugSerial.println("  l = coletar 128 leituras do MPU6050 e inferir no ESP32-S3");
