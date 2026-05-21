@@ -143,13 +143,13 @@ giroscópio x/y/z
 Comandos no terminal do Wokwi:
 
 ```text
-n = sorteia uma janela real do dataset UCI HAR
-l = coleta 128 leituras do MPU6050 e faz inferência live
+n = sorteia uma janela real do dataset UCI HAR para comparação
+l = coleta 128 leituras do MPU6050 e faz uma inferência live
 r = mostra uma leitura instantânea do MPU6050
-a = liga/desliga a demo automática
+m = liga/desliga o monitor live do MPU6050
 ```
 
-A demo automática inicia ligada por padrão para facilitar a apresentação: ela sorteia janelas reais do dataset e periodicamente executa uma inferência live com o MPU6050.
+O monitor live do MPU6050 inicia ligado por padrão. A simulação fica lendo os sliders do sensor, formando uma janela de 128 leituras e executando a MLP compacta no ESP32-S3. O dataset não fica rodando sozinho; ele é usado apenas quando o comando `n` é enviado.
 
 O comando `l` executa a pipeline embarcada completa:
 

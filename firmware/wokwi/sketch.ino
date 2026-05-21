@@ -9,12 +9,15 @@ const int SDA_PIN = 8;
 const int SCL_PIN = 9;
 const int MPU6050_ADDR = 0x68;
 const int SAMPLE_INTERVAL_MS = 20;
-const int AUTO_DEMO_INTERVAL_MS = 4500;
+const int LIVE_INFERENCE_INTERVAL_MS = 2500;
 
 int currentSample = 0;
-bool autoDemoEnabled = true;
-unsigned long lastAutoDemoMs = 0;
-int autoDemoStep = 0;
+bool liveMonitorEnabled = true;
+bool liveWindowReady = false;
+int liveSampleIndex = 0;
+unsigned long lastLiveSampleMs = 0;
+unsigned long lastLiveInferenceMs = 0;
+float liveWindow[6][WINDOW_SIZE];
 
 struct SensorReading {
   float accX;
@@ -186,6 +189,22 @@ void printFeatureSummary(const float features[FEATURE_COUNT]) {
   }
 }
 
+void runInferenceForWindow(const float window[6][WINDOW_SIZE], const char* title) {
+  float features[FEATURE_COUNT];
+  computeFeatures(window, features);
+  int predictedClass = predictActivity(features);
+
+  DebugSerial.println();
+  DebugSerial.println("========================================");
+  DebugSerial.println(title);
+  DebugSerial.print("Classe prevista pelo ESP32-S3: ");
+  DebugSerial.println(CLASS_NAMES[predictedClass]);
+  printFeatureSummary(features);
+  DebugSerial.println("========================================");
+  DebugSerial.println("Comandos: n=sortear janela do dataset | l=inferencia live unica | r=leitura crua");
+  DebugSerial.println("         m=liga/desliga monitor live do MPU6050");
+}
+
 void runInferenceForCurrentSample() {
   float features[FEATURE_COUNT];
   computeFeatures(DEMO_WINDOWS[currentSample], features);
@@ -203,8 +222,8 @@ void runInferenceForCurrentSample() {
   DebugSerial.println(predictedClass == expectedClass ? "Resultado: acertou" : "Resultado: errou");
   printFeatureSummary(features);
   DebugSerial.println("========================================");
-  DebugSerial.println("Comandos: n=sortear janela | l=inferencia live MPU6050 | r=leitura crua");
-  DebugSerial.println("         a=liga/desliga demo automatica");
+  DebugSerial.println("Comandos: n=sortear janela do dataset | l=inferencia live unica | r=leitura crua");
+  DebugSerial.println("         m=liga/desliga monitor live do MPU6050");
 }
 
 bool collectLiveWindow(float window[6][WINDOW_SIZE]) {
@@ -250,8 +269,39 @@ void runLiveInferenceFromMpu6050() {
   DebugSerial.println("Observacao: no Wokwi, o sensor fica praticamente parado se voce nao alterar os valores.");
   printFeatureSummary(features);
   DebugSerial.println("========================================");
-  DebugSerial.println("Comandos: n=sortear janela | l=inferencia live MPU6050 | r=leitura crua");
-  DebugSerial.println("         a=liga/desliga demo automatica");
+  DebugSerial.println("Comandos: n=sortear janela do dataset | l=inferencia live unica | r=leitura crua");
+  DebugSerial.println("         m=liga/desliga monitor live do MPU6050");
+}
+
+void updateLiveMonitor() {
+  unsigned long now = millis();
+  if (!liveMonitorEnabled || now - lastLiveSampleMs < SAMPLE_INTERVAL_MS) {
+    return;
+  }
+
+  lastLiveSampleMs = now;
+  SensorReading reading = readMpu6050();
+  if (!reading.ok) {
+    return;
+  }
+
+  liveWindow[0][liveSampleIndex] = reading.accX;
+  liveWindow[1][liveSampleIndex] = reading.accY;
+  liveWindow[2][liveSampleIndex] = reading.accZ;
+  liveWindow[3][liveSampleIndex] = reading.gyroX;
+  liveWindow[4][liveSampleIndex] = reading.gyroY;
+  liveWindow[5][liveSampleIndex] = reading.gyroZ;
+
+  liveSampleIndex++;
+  if (liveSampleIndex >= WINDOW_SIZE) {
+    liveSampleIndex = 0;
+    liveWindowReady = true;
+  }
+
+  if (liveWindowReady && now - lastLiveInferenceMs >= LIVE_INFERENCE_INTERVAL_MS) {
+    lastLiveInferenceMs = now;
+    runInferenceForWindow(liveWindow, "Monitor live do MPU6050 usando os sliders do Wokwi");
+  }
 }
 
 void setup() {
@@ -265,22 +315,25 @@ void setup() {
   DebugSerial.println("Classificador de atividade humana com UCI HAR + ESP32-S3");
   DebugSerial.println("Modelo embarcado: MLP compacta com 1 camada oculta de 16 neuronios");
   DebugSerial.println("Modos disponiveis:");
-  DebugSerial.println("  n = sortear uma janela real do dataset UCI HAR");
-  DebugSerial.println("  l = coletar 128 leituras do MPU6050 e inferir no ESP32-S3");
+  DebugSerial.println("  n = sortear uma janela real do dataset UCI HAR para comparacao");
+  DebugSerial.println("  l = coletar 128 leituras do MPU6050 e inferir uma vez");
   DebugSerial.println("  r = mostrar uma leitura instantanea do MPU6050");
-  DebugSerial.println("  a = ligar/desligar demo automatica");
+  DebugSerial.println("  m = ligar/desligar monitor live do MPU6050");
   DebugSerial.println("========================================");
 
   setupMpu6050();
   randomSeed((uint32_t)micros());
-  chooseRandomDemoSample();
   DebugSerial.println("MPU6050 inicializado.");
   printMpu6050Once();
-  runInferenceForCurrentSample();
-  lastAutoDemoMs = millis();
+  DebugSerial.println();
+  DebugSerial.println("Monitor live ligado.");
+  DebugSerial.println("Mexa nos sliders do MPU6050 no Wokwi para alterar as leituras do sensor.");
+  DebugSerial.println("A primeira previsao aparece depois que 128 leituras forem coletadas.");
 }
 
 void loop() {
+  updateLiveMonitor();
+
   if (DebugSerial.available()) {
     char command = DebugSerial.read();
     if (command == 'n' || command == 'N') {
@@ -290,24 +343,11 @@ void loop() {
       runLiveInferenceFromMpu6050();
     } else if (command == 'r' || command == 'R') {
       printMpu6050Once();
-    } else if (command == 'a' || command == 'A') {
-      autoDemoEnabled = !autoDemoEnabled;
+    } else if (command == 'm' || command == 'M') {
+      liveMonitorEnabled = !liveMonitorEnabled;
       DebugSerial.println();
-      DebugSerial.print("Demo automatica: ");
-      DebugSerial.println(autoDemoEnabled ? "ligada" : "desligada");
-      lastAutoDemoMs = millis();
-    }
-  }
-
-  if (autoDemoEnabled && millis() - lastAutoDemoMs >= AUTO_DEMO_INTERVAL_MS) {
-    lastAutoDemoMs = millis();
-    autoDemoStep++;
-
-    if (autoDemoStep % 4 == 0) {
-      runLiveInferenceFromMpu6050();
-    } else {
-      chooseRandomDemoSample();
-      runInferenceForCurrentSample();
+      DebugSerial.print("Monitor live do MPU6050: ");
+      DebugSerial.println(liveMonitorEnabled ? "ligado" : "desligado");
     }
   }
 }
