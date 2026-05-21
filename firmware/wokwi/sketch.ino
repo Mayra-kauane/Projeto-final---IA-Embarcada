@@ -18,6 +18,7 @@ int liveSampleIndex = 0;
 unsigned long lastLiveSampleMs = 0;
 unsigned long lastLiveInferenceMs = 0;
 float liveWindow[6][WINDOW_SIZE];
+bool hasLastLiveReading = false;
 
 struct SensorReading {
   float accX;
@@ -28,6 +29,8 @@ struct SensorReading {
   float gyroZ;
   bool ok;
 };
+
+SensorReading lastLiveReading;
 
 void setupMpu6050() {
   Wire.begin(SDA_PIN, SCL_PIN);
@@ -92,6 +95,22 @@ void printMpu6050Once() {
   DebugSerial.println("rad/s");
 }
 
+void printMpu6050Reading(const SensorReading& reading) {
+  DebugSerial.print("Leitura atual usada | accX=");
+  DebugSerial.print(reading.accX, 4);
+  DebugSerial.print("g accY=");
+  DebugSerial.print(reading.accY, 4);
+  DebugSerial.print("g accZ=");
+  DebugSerial.print(reading.accZ, 4);
+  DebugSerial.print("g gyroX=");
+  DebugSerial.print(reading.gyroX, 4);
+  DebugSerial.print("rad/s gyroY=");
+  DebugSerial.print(reading.gyroY, 4);
+  DebugSerial.print("rad/s gyroZ=");
+  DebugSerial.print(reading.gyroZ, 4);
+  DebugSerial.println("rad/s");
+}
+
 float squareRoot(float value) {
   return sqrt(value);
 }
@@ -139,6 +158,31 @@ void computeFeatures(const float window[6][WINDOW_SIZE], float features[FEATURE_
     features[featureIndex++] = maxValue;
     features[featureIndex++] = squareRoot(squareSum / WINDOW_SIZE);
   }
+}
+
+void fillLiveWindowWithReading(const SensorReading& reading) {
+  for (int i = 0; i < WINDOW_SIZE; i++) {
+    liveWindow[0][i] = reading.accX;
+    liveWindow[1][i] = reading.accY;
+    liveWindow[2][i] = reading.accZ;
+    liveWindow[3][i] = reading.gyroX;
+    liveWindow[4][i] = reading.gyroY;
+    liveWindow[5][i] = reading.gyroZ;
+  }
+
+  liveSampleIndex = 0;
+  liveWindowReady = true;
+}
+
+float readingDifference(const SensorReading& a, const SensorReading& b) {
+  float diff = 0.0f;
+  diff += fabs(a.accX - b.accX);
+  diff += fabs(a.accY - b.accY);
+  diff += fabs(a.accZ - b.accZ);
+  diff += fabs(a.gyroX - b.gyroX);
+  diff += fabs(a.gyroY - b.gyroY);
+  diff += fabs(a.gyroZ - b.gyroZ);
+  return diff;
 }
 
 int predictActivity(const float features[FEATURE_COUNT]) {
@@ -189,7 +233,7 @@ void printFeatureSummary(const float features[FEATURE_COUNT]) {
   }
 }
 
-void runInferenceForWindow(const float window[6][WINDOW_SIZE], const char* title) {
+void runInferenceForWindow(const float window[6][WINDOW_SIZE], const char* title, const SensorReading* currentReading = nullptr) {
   float features[FEATURE_COUNT];
   computeFeatures(window, features);
   int predictedClass = predictActivity(features);
@@ -197,6 +241,9 @@ void runInferenceForWindow(const float window[6][WINDOW_SIZE], const char* title
   DebugSerial.println();
   DebugSerial.println("========================================");
   DebugSerial.println(title);
+  if (currentReading != nullptr) {
+    printMpu6050Reading(*currentReading);
+  }
   DebugSerial.print("Classe prevista pelo ESP32-S3: ");
   DebugSerial.println(CLASS_NAMES[predictedClass]);
   printFeatureSummary(features);
@@ -285,6 +332,13 @@ void updateLiveMonitor() {
     return;
   }
 
+  if (!hasLastLiveReading || readingDifference(reading, lastLiveReading) > 0.05f) {
+    fillLiveWindowWithReading(reading);
+    lastLiveReading = reading;
+    hasLastLiveReading = true;
+    lastLiveInferenceMs = 0;
+  }
+
   liveWindow[0][liveSampleIndex] = reading.accX;
   liveWindow[1][liveSampleIndex] = reading.accY;
   liveWindow[2][liveSampleIndex] = reading.accZ;
@@ -300,7 +354,7 @@ void updateLiveMonitor() {
 
   if (liveWindowReady && now - lastLiveInferenceMs >= LIVE_INFERENCE_INTERVAL_MS) {
     lastLiveInferenceMs = now;
-    runInferenceForWindow(liveWindow, "Monitor live do MPU6050 usando os sliders do Wokwi");
+    runInferenceForWindow(liveWindow, "Monitor live do MPU6050 usando os sliders do Wokwi", &reading);
   }
 }
 
