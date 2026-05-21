@@ -93,6 +93,19 @@ float squareRoot(float value) {
   return sqrt(value);
 }
 
+void chooseRandomDemoSample() {
+  if (DEMO_SAMPLE_COUNT <= 1) {
+    currentSample = 0;
+    return;
+  }
+
+  int nextSample = random(DEMO_SAMPLE_COUNT - 1);
+  if (nextSample >= currentSample) {
+    nextSample++;
+  }
+  currentSample = nextSample;
+}
+
 void computeFeatures(const float window[6][WINDOW_SIZE], float features[FEATURE_COUNT]) {
   int featureIndex = 0;
 
@@ -190,7 +203,7 @@ void runInferenceForCurrentSample() {
   DebugSerial.println(predictedClass == expectedClass ? "Resultado: acertou" : "Resultado: errou");
   printFeatureSummary(features);
   DebugSerial.println("========================================");
-  DebugSerial.println("Comandos: n=proxima janela | l=inferencia live MPU6050 | r=leitura crua");
+  DebugSerial.println("Comandos: n=sortear janela | l=inferencia live MPU6050 | r=leitura crua");
   DebugSerial.println("         a=liga/desliga demo automatica");
 }
 
@@ -237,7 +250,7 @@ void runLiveInferenceFromMpu6050() {
   DebugSerial.println("Observacao: no Wokwi, o sensor fica praticamente parado se voce nao alterar os valores.");
   printFeatureSummary(features);
   DebugSerial.println("========================================");
-  DebugSerial.println("Comandos: n=proxima janela | l=inferencia live MPU6050 | r=leitura crua");
+  DebugSerial.println("Comandos: n=sortear janela | l=inferencia live MPU6050 | r=leitura crua");
   DebugSerial.println("         a=liga/desliga demo automatica");
 }
 
@@ -252,13 +265,15 @@ void setup() {
   DebugSerial.println("Classificador de atividade humana com UCI HAR + ESP32-S3");
   DebugSerial.println("Modelo embarcado: MLP compacta com 1 camada oculta de 16 neuronios");
   DebugSerial.println("Modos disponiveis:");
-  DebugSerial.println("  n = testar proxima janela real do dataset UCI HAR");
+  DebugSerial.println("  n = sortear uma janela real do dataset UCI HAR");
   DebugSerial.println("  l = coletar 128 leituras do MPU6050 e inferir no ESP32-S3");
   DebugSerial.println("  r = mostrar uma leitura instantanea do MPU6050");
   DebugSerial.println("  a = ligar/desligar demo automatica");
   DebugSerial.println("========================================");
 
   setupMpu6050();
+  randomSeed((uint32_t)micros());
+  chooseRandomDemoSample();
   DebugSerial.println("MPU6050 inicializado.");
   printMpu6050Once();
   runInferenceForCurrentSample();
@@ -269,7 +284,7 @@ void loop() {
   if (DebugSerial.available()) {
     char command = DebugSerial.read();
     if (command == 'n' || command == 'N') {
-      currentSample = (currentSample + 1) % DEMO_SAMPLE_COUNT;
+      chooseRandomDemoSample();
       runInferenceForCurrentSample();
     } else if (command == 'l' || command == 'L') {
       runLiveInferenceFromMpu6050();
@@ -291,7 +306,7 @@ void loop() {
     if (autoDemoStep % 4 == 0) {
       runLiveInferenceFromMpu6050();
     } else {
-      currentSample = (currentSample + 1) % DEMO_SAMPLE_COUNT;
+      chooseRandomDemoSample();
       runInferenceForCurrentSample();
     }
   }
